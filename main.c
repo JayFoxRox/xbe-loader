@@ -2,14 +2,18 @@
 #define USE_XISO
 //#define HOOK_NIC
 
+#define offsetof(type, member)  __builtin_offsetof (type, member)
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include <stdarg.h>
 
 #include <hal/xbox.h>
+#include <hal/fileio.h>
 #include <xboxkrnl/xboxkrnl.h>
 
 #ifndef QUIET
@@ -46,12 +50,6 @@ void* realloc_moved(void* x, size_t v) {
 #define strdup(a) strdup_moved(a)
 #define realloc(a, b) realloc_moved(a, b)
 #endif
-
-#define FIX_STDIO
-#define FIX_STRLEN
-#define FIX_BOOL
-#define FIX_ASSERT
-#include "fixes.h"
 
 // Section will be copied to new versions of loader
 #define __PERSIST_NAME "!persist"
@@ -113,7 +111,7 @@ typedef struct {
   uint32_t virtual_size;
   uint32_t raw_address;
   uint32_t raw_size;
-  uint32_t name;
+  uint32_t name; // char*
   uint32_t ref_count;
   uint32_t head_page_ref_count_address; // uint16_t*
   uint32_t tail_page_ref_count_address; // uint16_t*
@@ -138,7 +136,7 @@ typedef struct {
 
 char loader_path[520] __PERSIST = { 0 };
 Xbe* old_loader_xbe __PERSIST = NULL;
-Xbe* loader_xbe __PERSIST = DEFAULT_BASE;
+Xbe* loader_xbe __PERSIST = (Xbe*)DEFAULT_BASE;
 
 // We allocate space here, so when our loader is loaded initially, as much
 // memory as possible is reserved for us.
@@ -295,14 +293,14 @@ VOID DECLSPEC_NORETURN NTAPI HookedHalReturnToFirmware
               LaunchDataPage->Header.dwLaunchDataType);
 
     if (LaunchDataPage->Header.dwLaunchDataType == 0x00000001) {
-      struct LaunchData00000001 {
+      typedef struct {
         uint32_t reason;
         uint32_t context;
         uint32_t parameters[2];
         uint8_t padding[3072 - 16];
-      };
+      } LaunchData00000001;
 
-      struct LaunchData00000001* ld = &LaunchDataPage->LaunchData;
+      LaunchData00000001* ld = (LaunchData00000001*)&LaunchDataPage->LaunchData;
 
       write_log("LaunchData: Reason: %d; Parameters: { %d, %d }\n",
                 ld->reason, ld->parameters[0], ld->parameters[1]);
@@ -397,7 +395,7 @@ NTSTATUS NTAPI HookedNtAllocateVirtualMemory
   memory_statistics();
 
   PVOID BaseAddressIn = *BaseAddress;
-  PSIZE_T RegionSizeIn = *RegionSize;
+  SIZE_T RegionSizeIn = *RegionSize;
   NTSTATUS status = NtAllocateVirtualMemory(BaseAddress, ZeroBits, RegionSize, AllocationType, Protect);
   write_log("Called NtAllocateVirtualMemory(&%d, %d, &%d, %d, %d). Returned %d\n", BaseAddressIn, ZeroBits, RegionSizeIn, AllocationType, Protect, status);
   return status;
@@ -516,9 +514,10 @@ static void xbe_starter_thread(void* _xbe, void* unused) {
 }
 
 static XbeSection* find_xbe_section(Xbe* xbe, const char* name) {
+  XbeSection* sections = (XbeSection*)xbe->section_address;
   for(unsigned int i = 0; i < xbe->section_count; i++) {
-    XbeSection* section = xbe->section_address + i * sizeof(XbeSection);
-    if (!strcmp(section->name, name)) {
+    XbeSection* section = &sections[i];
+    if (!strcmp((char*)section->name, name)) {
       return section;
     }
   }
@@ -529,18 +528,18 @@ static void probe_memory(uint32_t address, uint32_t size) {
   uint32_t info_address = address;
   while(info_address < (address + size)) {
     MEMORY_BASIC_INFORMATION info;
-    NtQueryVirtualMemory(info_address, &info);
+    NtQueryVirtualMemory((PVOID)info_address, &info);
     if (info.State != MEM_FREE) {
       write_log("- Region %d, %d (%d bytes): %d\n", info.BaseAddress, info.AllocationBase, info.RegionSize, info.State);
     }
-    info_address = info.BaseAddress + info.RegionSize;
+    info_address = (uint32_t)info.BaseAddress + info.RegionSize;
   }
 }
 
 static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) {
   NTSTATUS status;
-  uint32_t alloc_address;
-  uint32_t alloc_size;
+  PVOID alloc_address;
+  SIZE_T alloc_size;
 
   //FIXME: load XBE and parse some fields
   FILE* f = fopen(path, "rb");
@@ -551,7 +550,7 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
 
   // These are the important header fields only
   uint8_t headers[0x15C];
-  fread(headers, 1, sizeof(headers), f);
+  fread((void*)headers, 1, sizeof(headers), f);
 
   uint32_t image_base = *(uint32_t*)&headers[0x104];
   uint32_t image_size = *(uint32_t*)&headers[0x10C];
@@ -560,9 +559,9 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
   write_log("Original base address: %d\n", image_base);
 
   // Reserve memory for the image
-  Xbe* xbe = base_address;
+  Xbe* xbe = (Xbe*)base_address;
   alloc_size = image_size;
-  status = NtAllocateVirtualMemory(&xbe, 0, &alloc_size, MEM_RESERVE, PAGE_READWRITE);
+  status = NtAllocateVirtualMemory((PVOID*)&xbe, 0, &alloc_size, MEM_RESERVE, PAGE_READWRITE);
   if (status != STATUS_SUCCESS) {
     write_log("Failed to reserve XBE memory\n");
 
@@ -574,12 +573,12 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
   // Load the headers
   uint32_t header_size = *(uint32_t*)&headers[0x108];
   alloc_size = header_size;
-  status = NtAllocateVirtualMemory(&xbe, 0, &alloc_size, MEM_COMMIT, PAGE_READWRITE);
+  status = NtAllocateVirtualMemory((PVOID*)&xbe, 0, &alloc_size, MEM_COMMIT, PAGE_READWRITE);
   if (status != STATUS_SUCCESS) {
     write_log("Failed to commit XBE memory for headers\n");
   }
   fseek(f, 0, SEEK_SET);
-  fread(xbe, 1, header_size, f);
+  fread((void*)xbe, 1, header_size, f);
 
   write_log("Loaded headers at: %d (%d / %d bytes for headers)\n", xbe, header_size, image_size);
 
@@ -587,7 +586,7 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
   xbe->certificate_address += (uint32_t)xbe - image_base;
 
   // Get a pointer to certificate
-  XbeCertificate* cert = xbe->certificate_address;
+  XbeCertificate* cert = (XbeCertificate*)xbe->certificate_address;
 
   // Allow all media types
   cert->allowed_media |= XBEIMAGE_MEDIA_TYPE_HARD_DISK;
@@ -606,9 +605,10 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
 
   // Relocate section pointer
   xbe->section_address += (uint32_t)xbe - image_base;
+  XbeSection* sections = (XbeSection*)xbe->section_address;
   for(unsigned int i = 0; i < xbe->section_count; i++) {
 
-    XbeSection* section = xbe->section_address + i * sizeof(XbeSection);
+    XbeSection* section = &sections[i];
 
     // Relocate section pointers
     section->virtual_address += (uint32_t)xbe - image_base;
@@ -625,7 +625,7 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
       write_log("Preloading section\n");
 
       // Commit section pages
-      alloc_address = section->virtual_address;
+      alloc_address = (PVOID)section->virtual_address;
       alloc_size = section->virtual_size;
       status = NtAllocateVirtualMemory(&alloc_address, 0, &alloc_size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
       if (status != STATUS_SUCCESS) {
@@ -634,10 +634,10 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
 
       // Load raw section data from file
       fseek(f, section->raw_address, SEEK_SET);
-      fread(section->virtual_address, 1, section->raw_size, f);
+      fread((void*)section->virtual_address, 1, section->raw_size, f);
 
       // Fill rest of section with zeros
-      memset(section->virtual_address + section->raw_size, 0x00, section->virtual_size - section->raw_size);
+      memset((void*)(section->virtual_address + section->raw_size), 0x00, section->virtual_size - section->raw_size);
 
       // Raise reference counts
       *(uint16_t*)section->head_page_ref_count_address += 1;
@@ -666,7 +666,7 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
 
     // relocate each relocation block
     while(relocations < relocations_end) {
-      uint8_t* block = *(uint32_t*)&relocations[0];
+      uint8_t* block = (uint8_t*)(*(uint32_t*)&relocations[0]);
       uint8_t* block_end = relocations + *(uint32_t*)&relocations[4];
       relocations += 8;
 
@@ -805,7 +805,7 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
   //FIXME: Mark sections read-only
 
   // Get entry point
-  uint32_t entry_point_address = xbe->entry_point;
+  uint32_t entry_point_address = (uint32_t)xbe->entry_point;
   if (entry_point_address & 0x10000000) {
     entry_point_address ^= XOR_EP_DEBUG;
     write_log("Assuming debug entry-point address: %d\n", entry_point_address);
@@ -814,7 +814,7 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
     write_log("Assuming retail entry-point address: %d\n", entry_point_address);
   }
   entry_point_address += (uint32_t)xbe - image_base;
-  xbe->entry_point = entry_point_address;
+  xbe->entry_point = (void(*)(void))entry_point_address;
 
   //FIXME: Fixup image base?
 
@@ -824,8 +824,8 @@ static Xbe* load_xbe(const char* path, uint32_t base_address, bool allow_hooks) 
 static void unload_xbe_section(XbeSection* section) {
   //FIXME: Check ref-count and only unload if in memory / unused
   //FIXME: We might have to align the virtual_address first?
-  uint32_t alloc_address = section->virtual_address;
-  uint32_t alloc_size = section->virtual_size;
+  PVOID alloc_address = (PVOID)section->virtual_address;
+  SIZE_T alloc_size = section->virtual_size;
   NTSTATUS status = NtFreeVirtualMemory(&alloc_address, &alloc_size, MEM_DECOMMIT);
   if (status != STATUS_SUCCESS) {
     write_log("Unable to decommit XBE section at %d\n", section->virtual_address);
@@ -845,14 +845,14 @@ static void unload_xbe(Xbe* xbe) {
   //       Those could free dynamically allocated memory of the binary.
 
   // Unload all sections first, kind of pointless, but we are nice
+  XbeSection* sections = (XbeSection*)xbe->section_address;
   for(unsigned int i = 0; i < xbe->section_count; i++) {
-    XbeSection* section = xbe->section_address + i * sizeof(XbeSection);
-    unload_xbe_section(section);
+    unload_xbe_section(&sections[i]);
   }
 
   // Now also remove the XBE image, this actually releases the reservation
-  uint32_t zero = 0;
-  NTSTATUS status = NtFreeVirtualMemory(&xbe, &zero, MEM_RELEASE);
+  SIZE_T zero = 0;
+  NTSTATUS status = NtFreeVirtualMemory((PVOID*)&xbe, &zero, MEM_RELEASE);
   if (status != STATUS_SUCCESS) {
     write_log("Unable to release XBE at %d\n", xbe);
   }
@@ -875,7 +875,7 @@ static __NO_RETURN void relocate_loader(uint32_t base_address) {
     write_log("Warning: Virtual size of persist has shrinked!\n");
     persist_size = persist->virtual_size;
   }
-  memcpy(persist->virtual_address, old_persist->virtual_address, persist_size);
+  memcpy((void*)persist->virtual_address, (void*)old_persist->virtual_address, persist_size);
 
   write_log("Will jump into new loader: %d!\n", loader_xbe->entry_point);
 
@@ -883,13 +883,13 @@ static __NO_RETURN void relocate_loader(uint32_t base_address) {
   loader_xbe->entry_point();
 }
 
-
+//FIXME: Constructor to patch our own kernel imports, so nothing can corrupt the memory layout!
 
 int main() {
 
   //FIXME: Allocate the space right behind our binary
   //       We do this, so other code can't mess up the heap of the main game
-
+  
 #ifndef QUIET
   // Setup debug output
   XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
@@ -911,7 +911,7 @@ int main() {
   memory_statistics();
 
 #if 1
-  if (loader_xbe == DEFAULT_BASE) {
+  if (loader_xbe == (Xbe*)DEFAULT_BASE) {
     // Eventually we'll be able to relocate the loader more often.
     // However, for simplicity we only relocate it once for now.
     // If we relocate more often we need to worry about persisting pages and

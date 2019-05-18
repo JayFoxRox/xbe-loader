@@ -1,5 +1,7 @@
 // This is a fixup for things that xboxkrnl.h messes up
 
+#include <stdint.h>
+
 typedef struct _IRPx {
   CSHORT Type; // + 0
   USHORT Size; // + 2

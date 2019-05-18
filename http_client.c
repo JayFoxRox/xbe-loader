@@ -1,5 +1,8 @@
 // Inspired by https://github.com/kennethnoyens/lwipHttpClient/blob/master/httpclient.c
 
+//FIXME: https://github.com/XboxDev/nxdk/issues/118
+#include <stdio.h>
+
 #include "lwip/tcp.h"
 #include "lwip/opt.h"
 #include "lwip/arch.h"
@@ -13,6 +16,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include "fixes.h"
 
 #if 1
 void write_log(const char* format, ...);
