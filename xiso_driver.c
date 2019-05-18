@@ -7,19 +7,17 @@
 #include <xboxrt/debug.h>
 
 #include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include <assert.h>
+#include <string.h>
+#include "fixes.h"
 
 #ifdef USE_HTTP
 #include "network.h"
 #include "http_client.h"
 #endif
 
-
-
-//#define FIX_BOOL
-//#define FIX_ASSERT
-#define FIX_STDIO
-#include "fixes.h"
 
 #if 0
 #define write_log(fmt, ...) debugPrint(fmt, ## __VA_ARGS__)
@@ -486,7 +484,7 @@ static __attribute__((__stdcall__)) VOID start_io(IN PDEVICE_OBJECT DeviceObject
     switch (IrpSp->Parameters.DeviceIoControl.IoControlCode) {
     //FIXME: Handle these
     default:
-      assert(false)
+      assert(false);
       break;
     }
 
