@@ -15,9 +15,10 @@
 #include <hal/xbox.h>
 #include <hal/fileio.h>
 #include <xboxkrnl/xboxkrnl.h>
+#include <winapi/synchapi.h>
 
 #ifndef QUIET
-#include <xboxrt/debug.h>
+#include <debug.h>
 #include <pbkit/pbkit.h>
 #include <hal/video.h>
 #endif
@@ -1054,7 +1055,7 @@ int main() {
     if (t % 10 == 0) {
       memory_statistics();
     }
-    XSleep(1000);
+    Sleep(1000);
     t++;
   }
 }

@@ -26,7 +26,7 @@ void write_log_crit(const char* format, ...);
 
 #define assert(x) if (!(x)) { debugPrint("\nAssert failed '%s' in %s:%d\n\n", #x, __FILE__, __LINE__); }
 
-#include <xboxrt/debug.h>
+#include <debug.h>
 
 #include "network.h"
 
