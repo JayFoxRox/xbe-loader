@@ -16,7 +16,6 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-#include "fixes.h"
 
 #if 1
 void write_log(const char* format, ...);
