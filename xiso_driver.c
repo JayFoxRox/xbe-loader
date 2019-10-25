@@ -4,14 +4,13 @@
 #include <hal/xbox.h>
 #include <hal/fileio.h>
 #include <xboxkrnl/xboxkrnl.h>
-#include <xboxrt/debug.h>
+#include <debug.h>
 
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
-#include "fixes.h"
 
 #ifdef USE_HTTP
 #include "network.h"
