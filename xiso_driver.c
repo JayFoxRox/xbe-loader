@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
-#include "fixes.h"
 
 #ifdef USE_HTTP
 #include "network.h"
