@@ -868,8 +868,6 @@ int main() {
 #ifndef QUIET
     // Setup debug output
     XVideoSetMode(640, 480, 32, REFRESH_DEFAULT);
-    pb_init();
-    pb_show_debug_screen();
 #endif
 
 #if 1
