@@ -17,16 +17,7 @@
 #include "http_client.h"
 #endif
 
-
-#if 0
-#define write_log(fmt, ...) debugPrint(fmt, ## __VA_ARGS__)
-#else
-void write_log(const char* format, ...);
-void write_log_crit(const char* format, ...);
-#define write_log(fmt, ...) write_log(fmt, ## __VA_ARGS__)
-#endif
-
-
+#include "write_log.h"
 #include "io.h"
 
 
